@@ -63,50 +63,160 @@ flowchart LR
 | Embedding | Voyage AI `voyage-3-large` |
 | Database | PostgreSQL, pgvector |
 
-## 빠른 시작
+## 클론부터 실행까지
 
-### 1. 백엔드
+이 저장소에는 백엔드와 프런트엔드가 함께 들어 있습니다. 저장소를 한 번만 클론한 뒤 두 애플리케이션을 각각 실행하면 됩니다.
+
+### 사전 준비
+
+- Git
+- Python 3.12 이상
+- Node.js와 npm
+- Docker Desktop (권장) 또는 PostgreSQL 및 pgvector 확장
+- Anthropic API 키
+- Voyage AI API 키
+
+### 1. 저장소 클론
+
+```powershell
+git clone https://github.com/hyyang9070/foodsafety-ai-chatbot.git
+cd foodsafety-ai-chatbot
+```
+
+### 2. 백엔드 설치
 
 ```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-`backend/.env` 파일을 만들고 API 키를 설정합니다.
+macOS 또는 Linux에서는 다음 명령으로 가상환경을 활성화합니다.
+
+```bash
+source .venv/bin/activate
+```
+
+### 3. 백엔드 환경 변수 설정
+
+`backend/.env` 파일을 만들고 API 키를 입력합니다.
 
 ```dotenv
 ANTHROPIC_API_KEY=your_anthropic_api_key
 VOYAGE_API_KEY=your_voyage_api_key
 ```
 
-PostgreSQL과 pgvector가 준비된 상태에서 서버를 실행합니다.
+`.env`에는 비밀 정보가 포함되므로 Git에 커밋하지 않습니다.
+
+### 4. 로컬 PostgreSQL 및 pgvector 준비
+
+가장 간단한 방법은 Docker로 프로젝트 전용 PostgreSQL을 실행하는 것입니다. 아래 명령은 현재 백엔드의 기본 연결 정보와 동일한 사용자, 비밀번호, 포트 및 데이터베이스를 생성합니다.
+
+```powershell
+docker volume create foodsafety-postgres-data
+docker run --name foodsafety-postgres -e POSTGRES_USER=langchain -e POSTGRES_PASSWORD=langchain -e POSTGRES_DB=langchain -p 6024:5432 -v foodsafety-postgres-data:/var/lib/postgresql/data -d pgvector/pgvector:pg16
+docker exec foodsafety-postgres psql -U langchain -d langchain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+
+`foodsafety-postgres-data` 볼륨에 데이터가 저장되므로 컨테이너를 중지해도 유지됩니다. 이후에는 새 컨테이너를 만들지 않고 다음 명령으로 다시 시작합니다.
+
+```powershell
+docker start foodsafety-postgres
+```
+
+기존에 설치된 PostgreSQL을 사용해도 됩니다. 이 경우 대상 데이터베이스에서 `CREATE EXTENSION IF NOT EXISTS vector;`를 실행하고, `backend/core/config.py`의 `CONNECTION_STRING`을 로컬 환경에 맞게 변경합니다.
+
+현재 기본 연결 주소는 다음과 같습니다.
+
+```text
+postgresql+psycopg://langchain:langchain@localhost:6024/langchain
+```
+
+pgvector의 다른 설치 방법은 [공식 설치 안내](https://github.com/pgvector/pgvector#installation)를 참고하세요.
+
+### 5. 식품공전 데이터 전처리 및 로컬 DB 적재
+
+아래 명령은 모두 가상환경이 활성화된 `backend` 디렉터리에서 실행합니다.
+
+먼저 `data/md/*.md` 원본을 검색 가능한 청크로 전처리합니다.
+
+```powershell
+python -m rag.preprocessor
+```
+
+전처리 흐름은 다음과 같습니다.
+
+```text
+data/md/*.md
+    → 제목 계층 정규화 및 문서 청킹
+    → data/doc.jsonl 생성
+```
+
+명령이 끝나면 파일별 청크 수와 전체 청크 수가 출력되고 `backend/data/doc.jsonl`이 생성됩니다.
+
+완전히 새로 만든 로컬 DB라면 `foodsafety_fd_cd` 벡터 테이블을 한 번만 초기화합니다. 현재 사용하는 `voyage-3-large`의 기본 임베딩 차원은 1,024입니다.
+
+```powershell
+python -c "from langchain_postgres import PGEngine; from core.config import CONNECTION_STRING; engine = PGEngine.from_connection_string(url=CONNECTION_STRING); engine.init_vectorstore_table(table_name='foodsafety_fd_cd', vector_size=1024)"
+```
+
+이미 `foodsafety_fd_cd` 테이블이 있는 DB에서는 이 초기화 명령을 건너뜁니다. 이제 JSONL의 각 청크를 Voyage AI로 임베딩하고 로컬 PostgreSQL에 적재합니다.
+
+```powershell
+python -m rag.load
+```
+
+적재가 완료되면 로컬 DB의 `foodsafety_fd_cd` 테이블에 데이터가 저장되고 완료 건수가 출력됩니다. Docker를 사용했다면 다음 명령으로 적재 건수를 확인할 수 있습니다.
+
+```powershell
+docker exec foodsafety-postgres psql -U langchain -d langchain -c "SELECT COUNT(*) FROM foodsafety_fd_cd;"
+```
+
+> `rag.load`는 Voyage AI API를 사용하므로 `VOYAGE_API_KEY`가 먼저 설정되어 있어야 합니다. 같은 DB에 적재 명령을 반복하면 문서가 중복될 수 있으므로 최초 구성 또는 의도적으로 DB를 다시 만들 때만 실행하세요.
+
+테이블 초기화 방식은 [LangChain PostgreSQL 공식 예제](https://github.com/langchain-ai/langchain-postgres#vectorstore), 임베딩 차원은 [Voyage AI 공식 문서](https://docs.voyageai.com/docs/embeddings)를 기준으로 합니다.
+
+### 6. 백엔드 실행
+
+`backend` 디렉터리에서 실행합니다.
 
 ```powershell
 uvicorn main:app --reload
 ```
 
-- API 문서: <http://127.0.0.1:8000/docs>
-- 기본 API 주소: <http://127.0.0.1:8000>
+- 백엔드 API: <http://127.0.0.1:8000>
+- Swagger UI: <http://127.0.0.1:8000/docs>
 
-### 2. 프런트엔드
+### 7. 프런트엔드 설치 및 실행
 
-새 터미널에서 다음 명령을 실행합니다.
+백엔드를 실행한 상태로 **새 터미널**을 열고, 클론한 프로젝트의 `frontend` 디렉터리로 이동합니다.
 
 ```powershell
-cd frontend
+cd foodsafety-ai-chatbot\frontend
 npm install
 npm run dev
 ```
 
-필요하면 `frontend/.env`에서 백엔드 주소를 변경할 수 있습니다.
+터미널이 이미 프로젝트 루트에서 열렸다면 `cd frontend`만 실행하면 됩니다.
+
+백엔드 주소를 변경해야 한다면 `frontend/.env` 파일을 생성합니다.
 
 ```dotenv
 VITE_API_URL=http://127.0.0.1:8000
 ```
 
-개발 서버: <http://localhost:5173>
+환경 변수가 없으면 `http://127.0.0.1:8000`을 사용합니다. 값을 변경한 후에는 Vite 개발 서버를 다시 시작해야 합니다.
+
+### 8. 실행 확인
+
+| 구분 | 실행 명령 | 접속 주소 |
+| --- | --- | --- |
+| Backend | `uvicorn main:app --reload` | <http://127.0.0.1:8000/docs> |
+| Frontend | `npm run dev` | <http://localhost:5173> |
+
+Vite가 `5173`이 아닌 다른 포트를 사용하면 `backend/core/config.py`의 `CORS_ORIGINS`에도 해당 주소를 추가해야 합니다.
 
 ## API 예시
 
