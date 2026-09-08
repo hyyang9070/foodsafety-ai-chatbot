@@ -13,7 +13,7 @@
 ## 요구 사항
 
 - Python 3.12 이상
-- Docker Desktop (권장) 또는 PostgreSQL 및 `vector` 확장
+- Neon 프로젝트 또는 공유받은 Neon DB 접근 권한
 - Anthropic API 키
 - Voyage AI API 키
 
@@ -21,7 +21,7 @@
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
@@ -33,73 +33,56 @@ source .venv/bin/activate
 
 ## 환경 변수
 
-`backend/.env` 파일을 생성합니다. 이 파일은 Git에서 제외됩니다.
+예제 파일을 복사해 `backend/.env`를 생성합니다. 이 파일은 Git에서 제외됩니다.
+
+```powershell
+Copy-Item .env.example .env
+```
 
 ```dotenv
+DATABASE_URL=postgresql://[user]:[password]@[neon-hostname]/[database]?sslmode=require&channel_binding=require
 ANTHROPIC_API_KEY=your_anthropic_api_key
 VOYAGE_API_KEY=your_voyage_api_key
 ```
 
-현재 데이터베이스 연결과 모델 설정은 `core/config.py`에서 관리합니다.
+Neon 콘솔의 프로젝트 화면에서 **Connect**를 눌러 연결 문자열을 복사한 뒤 `DATABASE_URL`에 입력합니다. 백엔드는 Neon의 `postgresql://` 접두사를 SQLAlchemy psycopg 3 형식으로 자동 변환합니다.
 
-```python
-CONNECTION_STRING = "postgresql+psycopg://langchain:langchain@localhost:6024/langchain"
-EMBEDDING_MODEL = "voyage-3-large"
-CHAT_MODEL = "anthropic:claude-sonnet-4-6"
-```
+> 연결 문자열에는 DB 비밀번호가 포함됩니다. `.env`를 커밋하거나 연결 문자열을 README, 채팅 또는 이슈에 공개하지 마세요.
 
-운영 환경에서는 연결 문자열을 환경 변수로 분리하는 것을 권장합니다.
+## Neon 데이터베이스 구성
 
-## 로컬 데이터베이스 구성
+### 1. 프로젝트 연결
 
-### Docker로 동일한 환경 구성하기 (권장)
+다음 중 현재 상황에 맞는 방법을 선택합니다.
 
-[pgvector 공식 Docker 이미지](https://github.com/pgvector/pgvector#docker)를 사용하면 현재 코드의 기본 연결값과 동일한 로컬 DB를 바로 만들 수 있습니다. Docker Desktop을 실행한 뒤 다음 명령을 입력합니다.
+- 팀의 기존 DB 사용: Neon 프로젝트 초대를 받은 뒤 동일한 프로젝트, 브랜치, 데이터베이스의 연결 문자열을 사용합니다.
+- 개인 DB 사용: Neon에서 새 프로젝트 또는 브랜치를 만들고 자신의 연결 문자열을 사용합니다.
 
-```powershell
-docker volume create foodsafety-postgres-data
-docker run --name foodsafety-postgres -e POSTGRES_USER=langchain -e POSTGRES_PASSWORD=langchain -e POSTGRES_DB=langchain -p 6024:5432 -v foodsafety-postgres-data:/var/lib/postgresql/data -d pgvector/pgvector:pg16
-```
+테이블 초기화와 데이터 적재에는 Neon **Direct connection** 문자열을 사용하는 편이 안전합니다. 앱 실행 시 연결 수가 많다면 이후 **Pooled connection** 문자열을 사용할 수 있습니다.
 
-생성된 `langchain` 데이터베이스에서 `vector` 확장을 활성화합니다. 확장은 데이터베이스마다 한 번씩 활성화해야 합니다.
+### 2. pgvector 활성화
 
-```powershell
-docker exec foodsafety-postgres psql -U langchain -d langchain -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-현재 기본 연결 정보는 다음과 일치합니다.
-
-| 항목 | 값 |
-| --- | --- |
-| Host | `localhost` |
-| Port | `6024` |
-| Database | `langchain` |
-| User | `langchain` |
-| Password | `langchain` |
-| Connection string | `postgresql+psycopg://langchain:langchain@localhost:6024/langchain` |
-
-DB 파일은 Docker의 `foodsafety-postgres-data` 볼륨에 보존됩니다.
-
-```powershell
-docker stop foodsafety-postgres
-docker start foodsafety-postgres
-```
-
-컨테이너를 중지하거나 Docker Desktop을 재시작해도 볼륨을 삭제하지 않는 한 적재된 데이터는 유지됩니다.
-
-### 기존 로컬 PostgreSQL 사용하기
-
-이미 PostgreSQL과 pgvector가 설치되어 있다면 사용할 데이터베이스에서 다음 SQL을 실행합니다.
+Neon 콘솔의 **SQL Editor**에서 연결할 데이터베이스를 선택하고 다음 SQL을 한 번 실행합니다.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-그다음 `core/config.py`의 `CONNECTION_STRING`을 실제 사용자, 비밀번호, 포트와 데이터베이스 이름에 맞게 수정합니다. pgvector 설치 자체가 필요하면 [공식 설치 안내](https://github.com/pgvector/pgvector#installation)를 참고하세요.
+Neon은 pgvector 확장을 지원하며 데이터베이스마다 확장을 한 번 활성화해야 합니다. 자세한 내용은 [Neon의 pgvector 안내](https://neon.com/docs/ai/ai-concepts#storing-vector-embeddings-in-postgres)를 참고하세요.
+
+### 3. 기존 데이터 여부 확인
+
+팀의 Neon DB에 이미 `foodsafety_fd_cd` 테이블과 데이터가 있다면 아래 쿼리로 확인할 수 있습니다.
+
+```sql
+SELECT COUNT(*) AS document_count FROM foodsafety_fd_cd;
+```
+
+테이블이 있고 결과가 `0`보다 크면 아래의 전처리, 테이블 초기화 및 적재 단계는 건너뛰고 서버를 실행합니다.
 
 ## 데이터 전처리 및 적재
 
-다음 과정은 클론한 사용자의 로컬 환경에서 식품공전 검색 데이터를 새로 만드는 단계입니다. 모든 명령은 가상환경이 활성화된 `backend` 디렉터리에서 실행합니다.
+다음 과정은 비어 있는 Neon DB에 식품공전 검색 데이터를 새로 만드는 단계입니다. 모든 명령은 가상환경이 활성화된 `backend` 디렉터리에서 실행합니다.
 
 ```text
 data/md/*.md
@@ -109,7 +92,7 @@ data/doc.jsonl
     ↓ python -m rag.load
 Voyage AI 임베딩
     ↓
-로컬 PostgreSQL의 foodsafety_fd_cd 테이블
+Neon PostgreSQL의 foodsafety_fd_cd 테이블
 ```
 
 ### 1. 원본 Markdown 확인
@@ -153,7 +136,7 @@ python -c "from langchain_postgres import PGEngine; from core.config import CONN
 
 ### 4. 벡터 DB 적재
 
-`VOYAGE_API_KEY`가 `backend/.env`에 설정되어 있고 로컬 PostgreSQL이 실행 중인지 확인한 뒤 적재합니다.
+`DATABASE_URL`과 `VOYAGE_API_KEY`가 `backend/.env`에 설정되어 있는지 확인한 뒤 적재합니다.
 
 ```powershell
 python -m rag.load
@@ -163,18 +146,18 @@ python -m rag.load
 
 ### 5. 적재 결과 확인
 
-Docker 환경에서는 다음 명령을 실행합니다.
+Neon SQL Editor에서 다음 쿼리를 실행합니다.
 
-```powershell
-docker exec foodsafety-postgres psql -U langchain -d langchain -c "SELECT COUNT(*) AS document_count FROM foodsafety_fd_cd;"
-docker exec foodsafety-postgres psql -U langchain -d langchain -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```sql
+SELECT COUNT(*) AS document_count FROM foodsafety_fd_cd;
+SELECT extversion FROM pg_extension WHERE extname = 'vector';
 ```
 
 첫 번째 결과가 `0`보다 크고 두 번째 결과에 pgvector 버전이 표시되면 준비가 완료된 것입니다.
 
 ### 재실행 시 주의사항
 
-`python -m rag.preprocessor`는 `data/doc.jsonl`을 다시 생성하므로 반복 실행해도 됩니다. 반면 `python -m rag.load`는 기존 테이블에 문서를 추가하므로 같은 데이터를 반복해서 적재하면 중복될 수 있습니다. 데이터를 새로 구축하려면 기존 DB 또는 대상 테이블을 먼저 정리한 뒤 적재해야 합니다.
+`python -m rag.preprocessor`는 `data/doc.jsonl`을 다시 생성하므로 반복 실행해도 됩니다. 반면 `python -m rag.load`는 기존 테이블에 문서를 추가하므로 같은 데이터를 반복해서 적재하면 중복될 수 있습니다. 팀이 같은 Neon DB를 공유한다면 DB 담당자만 적재를 수행하세요. 데이터를 새로 구축하려면 기존 DB 또는 대상 테이블을 먼저 정리한 뒤 적재해야 합니다.
 
 ## 서버 실행
 
