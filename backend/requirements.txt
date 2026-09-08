@@ -1,0 +1,17 @@
+# requirements.txt
+dotenv
+fastapi
+uvicorn[standard]
+python-dotenv
+langchain
+langchain-anthropic
+langchain-voyageai
+langchain-postgres
+psycopg[binary]
+langchain-docling
+langchain-text-splitters
+langsmith[claude-agent-sdk]
+langchain_docling
+langchain_text_splitters
+langchain_core
+pypdf

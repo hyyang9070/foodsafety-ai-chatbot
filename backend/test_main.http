@@ -1,0 +1,20 @@
+# test_api.http
+
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+
+{
+  "message": "곡류의 하위 범주는?",
+  "thread_id": "test-1"
+}
+
+###
+
+# 멀티턴 확인 (같은 thread_id로 이어서 질문)
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+
+{
+  "message": "그럼 아이스크림의 정의는?",
+  "thread_id": "test-1"
+}
