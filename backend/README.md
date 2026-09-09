@@ -19,6 +19,15 @@
 
 ## 설치
 
+저장소를 클론하고 `backend` 디렉터리로 이동합니다.
+
+```powershell
+git clone https://github.com/foodinfo-dev/foodsafety-ai-chatbot.git
+Set-Location foodsafety-ai-chatbot\backend
+```
+
+가상환경을 생성하고 의존성을 설치합니다.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
