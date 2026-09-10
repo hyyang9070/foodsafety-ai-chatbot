@@ -1,10 +1,13 @@
 # rag/agent.py
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain_anthropic import ChatAnthropic
 from langgraph.checkpoint.memory import InMemorySaver
 
 from core.config import CHAT_MODEL
 from rag.tools import search_food_code
+
+MODEL_TEMPERATURE = 0.1
 
 SYSTEM_PROMPT = (
     "너는 대한민국 식품 기준·규격 전문 어시스턴트다.\n\n"
@@ -22,8 +25,13 @@ SYSTEM_PROMPT = (
     "- 불필요한 감탄사나 장식 없이 사실 위주로 간결하게 답하라."
 )
 
+chat_model = ChatAnthropic(
+    model=CHAT_MODEL.removeprefix("anthropic:"),
+    temperature=MODEL_TEMPERATURE,
+)
+
 agent = create_agent(
-    model=CHAT_MODEL,
+    model=chat_model,
     tools=[search_food_code],
     system_prompt=SYSTEM_PROMPT,
     middleware=[
